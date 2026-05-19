@@ -1,424 +1,356 @@
-"""
-============================================================
-  ACCOUNTING AUTOMATION TOOLKIT
-  Features:
-    1. Multiple Excel files merge
-    2. GST Calculation (CGST, SGST, IGST)
-    3. Monthly Income/Expense Summary
-    4. Invoice Generator
-    5. Final Report in Excel
-============================================================
-"""
-
-import os
-import glob
-import pandas as pd
-from openpyxl import Workbook, load_workbook
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from openpyxl.utils import get_column_letter
-from datetime import datetime
-
-# ─────────────────────────────────────────────
-# CONFIG — Apni details yahan bharen
-# ─────────────────────────────────────────────
-COMPANY_NAME    = "Aapki Company Ka Naam"
-COMPANY_ADDRESS = "Address, Shehar, State - PIN"
-COMPANY_GSTIN   = "GSTIN123456789"
-INPUT_FOLDER    = "input_files"       # Yahan apni Excel files rakhein
-OUTPUT_FILE     = "accounting_report.xlsx"
-INVOICE_PREFIX  = "INV"
-GST_RATE        = 18                  # GST % (change as needed: 5, 12, 18, 28)
-
-# ─────────────────────────────────────────────
-# STYLES
-# ─────────────────────────────────────────────
-HEADER_FILL   = PatternFill("solid", start_color="1F4E79")
-SUB_FILL      = PatternFill("solid", start_color="2E75B6")
-ALT_FILL      = PatternFill("solid", start_color="D6E4F0")
-TOTAL_FILL    = PatternFill("solid", start_color="FFF2CC")
-WHITE_FILL    = PatternFill("solid", start_color="FFFFFF")
-
-HEADER_FONT   = Font(name="Arial", bold=True, color="FFFFFF", size=11)
-SUBHEAD_FONT  = Font(name="Arial", bold=True, color="FFFFFF", size=10)
-TOTAL_FONT    = Font(name="Arial", bold=True, color="000000", size=10)
-NORMAL_FONT   = Font(name="Arial", size=10)
-
-CENTER        = Alignment(horizontal="center", vertical="center")
-LEFT          = Alignment(horizontal="left",   vertical="center")
-RIGHT         = Alignment(horizontal="right",  vertical="center")
-
-thin = Side(style="thin", color="BFBFBF")
-BORDER = Border(left=thin, right=thin, top=thin, bottom=thin)
-
-def style_cell(cell, font=None, fill=None, align=None, border=True, num_format=None):
-    if font:       cell.font       = font
-    if fill:       cell.fill       = fill
-    if align:      cell.alignment  = align
-    if border:     cell.border     = BORDER
-    if num_format: cell.number_format = num_format
-
-def header_row(ws, row, cols, texts, fill=None, font=None):
-    fill = fill or HEADER_FILL
-    font = font or HEADER_FONT
-    for col, text in zip(cols, texts):
-        c = ws.cell(row=row, column=col, value=text)
-        style_cell(c, font=font, fill=fill, align=CENTER)
-
-# ─────────────────────────────────────────────
-# 1. MERGE MULTIPLE EXCEL FILES
-# ─────────────────────────────────────────────
-def merge_excel_files(folder=INPUT_FOLDER):
-    files = glob.glob(os.path.join(folder, "*.xlsx")) + glob.glob(os.path.join(folder, "*.csv"))
-    if not files:
-        print(f"[!] '{folder}' folder mein koi file nahi mili. Sample data use ho raha hai.")
-        return generate_sample_data()
-
-    dfs = []
-    for f in files:
-        try:
-            df = pd.read_excel(f) if f.endswith(".xlsx") else pd.read_csv(f)
-            df["Source_File"] = os.path.basename(f)
-            dfs.append(df)
-            print(f"    ✓ {os.path.basename(f)} — {len(df)} rows")
-        except Exception as e:
-            print(f"    ✗ {os.path.basename(f)} skip: {e}")
-
-    if not dfs:
-        return generate_sample_data()
-
-    merged = pd.concat(dfs, ignore_index=True)
-    # Standardise common column names
-    rename_map = {}
-    for col in merged.columns:
-        lower = col.strip().lower()
-        if lower in ["amount", "amt", "value", "total"]:
-            rename_map[col] = "Amount"
-        elif lower in ["date", "invoice date", "bill date"]:
-            rename_map[col] = "Date"
-        elif lower in ["description", "desc", "item", "particulars"]:
-            rename_map[col] = "Description"
-        elif lower in ["type", "category", "head"]:
-            rename_map[col] = "Type"
-        elif lower in ["party", "customer", "vendor", "client"]:
-            rename_map[col] = "Party"
-    merged.rename(columns=rename_map, inplace=True)
-    return merged
-
-def generate_sample_data():
-    """Sample data when no input files are present"""
-    print("    → Sample demo data generate ho raha hai...\n")
-    rows = [
-        {"Date": "2024-01-05", "Description": "Office Rent",          "Type": "Expense", "Party": "Landlord",       "Amount": 25000},
-        {"Date": "2024-01-10", "Description": "Website Design",        "Type": "Income",  "Party": "Client A",       "Amount": 75000},
-        {"Date": "2024-01-15", "Description": "Electricity Bill",      "Type": "Expense", "Party": "CSPDCL",         "Amount": 3200},
-        {"Date": "2024-01-20", "Description": "Consulting Services",   "Type": "Income",  "Party": "Client B",       "Amount": 50000},
-        {"Date": "2024-02-02", "Description": "Office Supplies",       "Type": "Expense", "Party": "Stationery Shop","Amount": 1500},
-        {"Date": "2024-02-08", "Description": "Software Development",  "Type": "Income",  "Party": "Client C",       "Amount": 120000},
-        {"Date": "2024-02-14", "Description": "Internet Bill",         "Type": "Expense", "Party": "Airtel",         "Amount": 2000},
-        {"Date": "2024-02-20", "Description": "Mobile Recharge",       "Type": "Expense", "Party": "Jio",            "Amount": 599},
-        {"Date": "2024-03-01", "Description": "Training Workshop",     "Type": "Income",  "Party": "Client D",       "Amount": 35000},
-        {"Date": "2024-03-10", "Description": "Office Renovation",     "Type": "Expense", "Party": "Contractor",     "Amount": 45000},
-        {"Date": "2024-03-15", "Description": "Annual Maintenance",    "Type": "Income",  "Party": "Client A",       "Amount": 60000},
-        {"Date": "2024-03-25", "Description": "Travel Expense",        "Type": "Expense", "Party": "Self",           "Amount": 8000},
-    ]
-    df = pd.DataFrame(rows)
-    df["Date"] = pd.to_datetime(df["Date"])
-    return df
-
-# ─────────────────────────────────────────────
-# 2. GST CALCULATION
-# ─────────────────────────────────────────────
-def calculate_gst(df, rate=GST_RATE):
-    gst = df.copy()
-    if "Amount" not in gst.columns:
-        print("[!] 'Amount' column nahi mila.")
-        return gst
-
-    half = rate / 2
-    gst["Base_Amount"]  = gst["Amount"]
-    gst["CGST_%"]       = half
-    gst["SGST_%"]       = half
-    gst["IGST_%"]       = 0.0
-    gst["CGST_Amt"]     = (gst["Amount"] * half / 100).round(2)
-    gst["SGST_Amt"]     = (gst["Amount"] * half / 100).round(2)
-    gst["IGST_Amt"]     = 0.0
-    gst["Total_GST"]    = gst["CGST_Amt"] + gst["SGST_Amt"]
-    gst["Grand_Total"]  = gst["Amount"] + gst["Total_GST"]
-    return gst
-
-# ─────────────────────────────────────────────
-# 3. MONTHLY SUMMARY
-# ─────────────────────────────────────────────
-def monthly_summary(df):
-    df = df.copy()
-    if "Date" in df.columns:
-        df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
-        df["Month"] = df["Date"].dt.strftime("%Y-%m")
-    else:
-        df["Month"] = "Unknown"
-
-    if "Type" not in df.columns:
-        df["Type"] = "Income"
-
-    df["Amount"] = pd.to_numeric(df["Amount"], errors="coerce").fillna(0)
-
-    income  = df[df["Type"].str.lower() == "income"].groupby("Month")["Amount"].sum()
-    expense = df[df["Type"].str.lower() == "expense"].groupby("Month")["Amount"].sum()
-
-    summary = pd.DataFrame({"Income": income, "Expense": expense}).fillna(0)
-    summary["Net_Profit"]    = summary["Income"] - summary["Expense"]
-    summary["Profit_Margin"] = (summary["Net_Profit"] / summary["Income"].replace(0, 1) * 100).round(2)
-    return summary.reset_index()
-
-# ─────────────────────────────────────────────
-# 4. INVOICE GENERATOR
-# ─────────────────────────────────────────────
-SAMPLE_INVOICES = [
-    {"Party": "Client A",  "Items": [{"desc": "Web Development",  "qty": 1, "rate": 50000},
-                                      {"desc": "SEO Services",     "qty": 2, "rate": 5000}]},
-    {"Party": "Client B",  "Items": [{"desc": "Mobile App Design","qty": 1, "rate": 80000}]},
-    {"Party": "Client C",  "Items": [{"desc": "Consulting",        "qty": 5, "rate": 3000},
-                                      {"desc": "Report Writing",   "qty": 2, "rate": 2500}]},
-]
-
-def write_invoice_sheet(wb, inv_num, party, items, gst_rate, date_str):
-    sheet_name = f"Invoice-{inv_num}"
-    ws = wb.create_sheet(sheet_name)
-
-    # Company header
-    ws.merge_cells("A1:F1")
-    ws["A1"] = COMPANY_NAME
-    style_cell(ws["A1"], Font(name="Arial", bold=True, size=16, color="1F4E79"), align=CENTER, border=False)
-
-    ws.merge_cells("A2:F2")
-    ws["A2"] = COMPANY_ADDRESS
-    style_cell(ws["A2"], NORMAL_FONT, align=CENTER, border=False)
-
-    ws.merge_cells("A3:F3")
-    ws["A3"] = f"GSTIN: {COMPANY_GSTIN}"
-    style_cell(ws["A3"], NORMAL_FONT, align=CENTER, border=False)
-
-    # Invoice details
-    ws["A5"] = "Invoice No:"
-    ws["B5"] = f"{INVOICE_PREFIX}-{inv_num:04d}"
-    ws["D5"] = "Date:"
-    ws["E5"] = date_str
-    ws["A6"] = "Bill To:"
-    ws["B6"] = party
-    ws["D6"] = "GST Rate:"
-    ws["E6"] = f"{gst_rate}%"
-
-    for cell in ["A5","B5","D5","E5","A6","B6","D6","E6"]:
-        style_cell(ws[cell], NORMAL_FONT, border=False)
-    ws["A5"].font = ws["A6"].font = ws["D5"].font = ws["D6"].font = Font(name="Arial", bold=True, size=10)
-
-    # Table header
-    row = 8
-    cols = ["#", "Description", "Qty", "Rate (₹)", "Amount (₹)", "GST (₹)"]
-    header_row(ws, row, range(1, 7), cols)
-
-    # Items
-    subtotal = 0
-    for i, item in enumerate(items, 1):
-        row += 1
-        amt = item["qty"] * item["rate"]
-        subtotal += amt
-        fill = ALT_FILL if i % 2 == 0 else WHITE_FILL
-        for col, val in zip(range(1,7), [i, item["desc"], item["qty"], item["rate"], amt, round(amt * gst_rate / 100, 2)]):
-            c = ws.cell(row=row, column=col, value=val)
-            style_cell(c, NORMAL_FONT, fill, align=RIGHT if col > 2 else LEFT)
-
-    # Totals
-    row += 1
-    gst_amt    = round(subtotal * gst_rate / 100, 2)
-    grand_total = subtotal + gst_amt
-
-    for label, value, col_start in [
-        ("Subtotal",    subtotal,    4),
-        ("GST Amount",  gst_amt,     4),
-        ("Grand Total", grand_total, 4),
-    ]:
-        row += 1
-        c_label = ws.cell(row=row, column=col_start, value=label)
-        c_value = ws.cell(row=row, column=col_start + 1, value=value)
-        style_cell(c_label, TOTAL_FONT, TOTAL_FILL, align=RIGHT)
-        style_cell(c_value, TOTAL_FONT, TOTAL_FILL, align=RIGHT, num_format='₹#,##0.00')
-
-    # Column widths
-    ws.column_dimensions["A"].width = 5
-    ws.column_dimensions["B"].width = 35
-    ws.column_dimensions["C"].width = 8
-    ws.column_dimensions["D"].width = 15
-    ws.column_dimensions["E"].width = 15
-    ws.column_dimensions["F"].width = 15
-
-    return grand_total
-
-# ─────────────────────────────────────────────
-# 5. BUILD FINAL REPORT
-# ─────────────────────────────────────────────
-def build_report(df, gst_df, summary, wb, invoices_total):
-    today = datetime.today().strftime("%d %b %Y")
-
-    # ── Sheet 1: Merged Data ──────────────────
-    ws1 = wb.active
-    ws1.title = "All Transactions"
-
-    ws1.merge_cells("A1:H1")
-    ws1["A1"] = f"ALL TRANSACTIONS — {COMPANY_NAME}"
-    style_cell(ws1["A1"], HEADER_FONT, HEADER_FILL, CENTER, border=False)
-
-    cols = list(df.columns)[:8]
-    header_row(ws1, 2, range(1, len(cols)+1), cols)
-
-    for r_idx, row in enumerate(df.itertuples(index=False), 3):
-        fill = ALT_FILL if r_idx % 2 == 0 else WHITE_FILL
-        for c_idx, val in enumerate(row[:8], 1):
-            cell = ws1.cell(row=r_idx, column=c_idx, value=val)
-            style_cell(cell, NORMAL_FONT, fill, LEFT)
-
-    for i, col in enumerate(cols, 1):
-        ws1.column_dimensions[get_column_letter(i)].width = 20
-
-    # ── Sheet 2: GST Sheet ────────────────────
-    ws2 = wb.create_sheet("GST Calculation")
-    ws2.merge_cells("A1:I1")
-    ws2["A1"] = f"GST CALCULATION SHEET — {GST_RATE}% Rate"
-    style_cell(ws2["A1"], HEADER_FONT, HEADER_FILL, CENTER, border=False)
-
-    gst_cols = ["Date","Description","Party","Type","Base_Amount","CGST_Amt","SGST_Amt","IGST_Amt","Grand_Total"]
-    available = [c for c in gst_cols if c in gst_df.columns]
-    header_row(ws2, 2, range(1, len(available)+1), available)
-
-    for r_idx, row in enumerate(gst_df[available].itertuples(index=False), 3):
-        fill = ALT_FILL if r_idx % 2 == 0 else WHITE_FILL
-        for c_idx, val in enumerate(row, 1):
-            cell = ws2.cell(row=r_idx, column=c_idx, value=val)
-            is_money = available[c_idx-1] in ["Base_Amount","CGST_Amt","SGST_Amt","IGST_Amt","Grand_Total"]
-            style_cell(cell, NORMAL_FONT, fill, RIGHT if is_money else LEFT,
-                       num_format='#,##0.00' if is_money else None)
-
-    last_data = 2 + len(gst_df)
-    total_row = last_data + 2
-    ws2.cell(row=total_row, column=len(available)-1, value="TOTAL:").font = TOTAL_FONT
-    ws2.cell(row=total_row, column=len(available)-1).fill = TOTAL_FILL
-
-    total_cell = ws2.cell(row=total_row, column=len(available),
-                          value=f"=SUM({get_column_letter(len(available))}3:{get_column_letter(len(available))}{last_data})")
-    style_cell(total_cell, TOTAL_FONT, TOTAL_FILL, RIGHT, num_format='#,##0.00')
-
-    for i in range(1, len(available)+1):
-        ws2.column_dimensions[get_column_letter(i)].width = 18
-
-    # ── Sheet 3: Monthly Summary ──────────────
-    ws3 = wb.create_sheet("Monthly Summary")
-    ws3.merge_cells("A1:E1")
-    ws3["A1"] = "MONTHLY INCOME & EXPENSE SUMMARY"
-    style_cell(ws3["A1"], HEADER_FONT, HEADER_FILL, CENTER, border=False)
-
-    s_cols = ["Month", "Income", "Expense", "Net_Profit", "Profit_Margin"]
-    header_row(ws3, 2, range(1, 6), s_cols)
-
-    for r_idx, row in enumerate(summary.itertuples(index=False), 3):
-        fill = ALT_FILL if r_idx % 2 == 0 else WHITE_FILL
-        for c_idx, val in enumerate(row[:5], 1):
-            cell = ws3.cell(row=r_idx, column=c_idx, value=val)
-            is_pct  = s_cols[c_idx-1] == "Profit_Margin"
-            is_money= s_cols[c_idx-1] in ["Income","Expense","Net_Profit"]
-            fmt = '0.00"%"' if is_pct else ('#,##0.00' if is_money else None)
-            style_cell(cell, NORMAL_FONT, fill, RIGHT if c_idx > 1 else LEFT, num_format=fmt)
-
-    # Totals row
-    tr = 2 + len(summary) + 1
-    ws3.cell(row=tr, column=1, value="TOTAL").font = TOTAL_FONT
-    ws3.cell(row=tr, column=1).fill = TOTAL_FILL
-    for col in range(2, 5):
-        c = ws3.cell(row=tr, column=col,
-                     value=f"=SUM({get_column_letter(col)}3:{get_column_letter(col)}{2+len(summary)})")
-        style_cell(c, TOTAL_FONT, TOTAL_FILL, RIGHT, num_format='#,##0.00')
-
-    for i in range(1, 6):
-        ws3.column_dimensions[get_column_letter(i)].width = 20
-
-    # ── Sheet 4: Dashboard ────────────────────
-    ws4 = wb.create_sheet("Dashboard")
-    ws4.merge_cells("A1:D1")
-    ws4["A1"] = f"ACCOUNTING DASHBOARD — {today}"
-    style_cell(ws4["A1"], Font(name="Arial", bold=True, size=14, color="FFFFFF"), HEADER_FILL, CENTER, border=False)
-
-    income_total  = summary["Income"].sum()
-    expense_total = summary["Expense"].sum()
-    net_profit    = income_total - expense_total
-
-    kpis = [
-        ("Total Income",      f"₹{income_total:,.2f}",   "2E75B6"),
-        ("Total Expense",     f"₹{expense_total:,.2f}",  "C00000"),
-        ("Net Profit",        f"₹{net_profit:,.2f}",     "375623" if net_profit >= 0 else "C00000"),
-        ("Total GST Payable", f"₹{gst_df['Total_GST'].sum():,.2f}" if 'Total_GST' in gst_df.columns else "N/A", "7030A0"),
-        ("Total Invoiced",    f"₹{invoices_total:,.2f}", "1F4E79"),
-        ("Transactions",      str(len(df)),               "4A4A4A"),
-    ]
-
-    for i, (label, value, color) in enumerate(kpis, 1):
-        row = i + 2
-        lc = ws4.cell(row=row, column=1, value=label)
-        vc = ws4.cell(row=row, column=2, value=value)
-        lc.font = Font(name="Arial", bold=True, size=11)
-        vc.font = Font(name="Arial", bold=True, size=12, color=color)
-        lc.fill = vc.fill = ALT_FILL if i % 2 == 0 else WHITE_FILL
-        lc.border = vc.border = BORDER
-        lc.alignment = LEFT
-        vc.alignment = RIGHT
-
-    ws4.column_dimensions["A"].width = 25
-    ws4.column_dimensions["B"].width = 25
-
-    # Make Dashboard first
-    wb.move_sheet("Dashboard", offset=-wb.index(wb["Dashboard"]))
-
-# ─────────────────────────────────────────────
-# MAIN
-# ─────────────────────────────────────────────
-def main():
-    print("\n" + "="*55)
-    print("   ACCOUNTING AUTOMATION TOOLKIT")
-    print("="*55)
-
-    # Create input folder if missing
-    os.makedirs(INPUT_FOLDER, exist_ok=True)
-
-    print("\n[1/5] Files merge ho rahi hain...")
-    df = merge_excel_files()
-
-    print("\n[2/5] GST calculate ho raha hai...")
-    gst_df = calculate_gst(df)
-
-    print("\n[3/5] Monthly summary ban rahi hai...")
-    summary = monthly_summary(df)
-
-    print("\n[4/5] Invoices generate ho rahi hain...")
-    wb = Workbook()
-    today_str = datetime.today().strftime("%d/%m/%Y")
-    invoices_total = 0
-    for idx, inv in enumerate(SAMPLE_INVOICES, 1):
-        total = write_invoice_sheet(wb, idx, inv["Party"], inv["Items"], GST_RATE, today_str)
-        invoices_total += total
-        print(f"    ✓ Invoice #{idx:04d} — {inv['Party']} — ₹{total:,.2f}")
-
-    print("\n[5/5] Final report ban raha hai...")
-    build_report(df, gst_df, summary, wb, invoices_total)
-
-    wb.save(OUTPUT_FILE)
-    print(f"\n{'='*55}")
-    print(f"  ✅ DONE! Report save hui: {OUTPUT_FILE}")
-    print(f"{'='*55}")
-    print(f"\n  📊 Sheets:")
-    print(f"     • Dashboard         — Key numbers ek jagah")
-    print(f"     • All Transactions  — Sab transactions merged")
-    print(f"     • GST Calculation   — CGST, SGST, Grand Total")
-    print(f"     • Monthly Summary   — Mahine ka income/expense")
-    print(f"     • Invoice-0001 to {len(SAMPLE_INVOICES):04d} — Invoices")
-    print()
-
-if __name__ == "__main__":
-    main()
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Accounting Automation Toolkit</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&display=swap');
+        body { font-family: 'DM Sans', sans-serif; background-color: #0a0a0f; color: #f0ede6; }
+    </style>
+</head>
+<body class="min-h-screen p-4 md:p-8">
+
+    <div class="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center bg-[#13131a] p-6 rounded-xl border border-gray-800 mb-8 gap-4">
+        <div>
+            <h1 class="text-2xl font-bold text-white flex items-center gap-2">
+                📊 Accounting Automation <span class="text-[#c9a84c] text-sm bg-amber-500/10 px-2 py-1 rounded">Pro v2.0</span>
+            </h1>
+            <p class="text-sm text-gray-400 mt-1">Excel Merge, GST Calculation, Monthly Summary & Invoices</p>
+        </div>
+        <div class="flex gap-3">
+            <button onclick="loadDemoData()" class="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-sm font-medium rounded-lg transition">
+                ✨ Use Demo Data
+            </button>
+            <button onclick="exportToExcel()" class="px-4 py-2 bg-gradient-to-r from-[#c9a84c] to-[#b8922e] text-black font-semibold text-sm rounded-lg hover:brightness-110 transition shadow-lg">
+                📥 Download Excel Report
+            </button>
+        </div>
+    </div>
+
+    <div class="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-4 gap-8">
+        
+        <div class="lg:col-span-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div class="bg-[#13131a] p-5 rounded-xl border border-gray-800">
+                <p class="text-xs font-medium text-gray-400 uppercase tracking-wider">Total Income</p>
+                <h3 id="dash-income" class="text-2xl font-bold text-emerald-400 mt-2">₹0.00</h3>
+            </div>
+            <div class="bg-[#13131a] p-5 rounded-xl border border-gray-800">
+                <p class="text-xs font-medium text-gray-400 uppercase tracking-wider">Total Expense</p>
+                <h3 id="dash-expense" class="text-2xl font-bold text-rose-400 mt-2">₹0.00</h3>
+            </div>
+            <div class="bg-[#13131a] p-5 rounded-xl border border-gray-800">
+                <p class="text-xs font-medium text-gray-400 uppercase tracking-wider">Net Profit</p>
+                <h3 id="dash-profit" class="text-2xl font-bold text-amber-400 mt-2">₹0.00</h3>
+            </div>
+            <div class="bg-[#13131a] p-5 rounded-xl border border-gray-800">
+                <p class="text-xs font-medium text-gray-400 uppercase tracking-wider">Total GST Payable (18%)</p>
+                <h3 id="dash-gst" class="text-2xl font-bold text-purple-400 mt-2">₹0.00</h3>
+            </div>
+        </div>
+
+        <div class="lg:col-span-1 bg-[#13131a] p-6 rounded-xl border border-gray-800 h-fit space-y-6">
+            <div>
+                <h3 class="text-sm font-semibold text-[#c9a84c] uppercase tracking-wider mb-3">1. Upload Transactions</h3>
+                <label class="block w-full text-center border border-dashed border-gray-700 hover:border-[#c9a84c] rounded-lg p-4 cursor-pointer transition bg-[#1a1a24]">
+                    <span class="text-xs text-gray-400 block">Select CSV or Excel file</span>
+                    <input type="file" id="file-upload" accept=".csv, .xlsx" class="hidden" onchange="handleFileUpload(event)">
+                </label>
+            </div>
+
+            <div>
+                <h3 class="text-sm font-semibold text-[#c9a84c] uppercase tracking-wider mb-3">2. Tool Settings</h3>
+                <div class="space-y-3">
+                    <div>
+                        <label class="text-xs text-gray-400 block mb-1">GST Rate (%)</label>
+                        <select id="gst-rate-select" onchange="recalculateData()" class="w-full bg-[#21212e] border border-gray-700 rounded-lg p-2 text-sm text-white focus:border-[#c9a84c] outline-none">
+                            <option value="5">5%</option>
+                            <option value="12">12%</option>
+                            <option value="18" selected>18%</option>
+                            <option value="28">28%</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="lg:col-span-3 space-y-6">
+            <div class="flex border-b border-gray-800 gap-4">
+                <button onclick="switchTab('all-tx')" id="btn-all-tx" class="pb-3 text-sm font-medium border-b-2 border-[#c9a84c] text-[#c9a84c]">All Transactions</button>
+                <button onclick="switchTab('gst-sheet')" id="btn-gst-sheet" class="pb-3 text-sm font-medium border-b-2 border-transparent text-gray-400 hover:text-white">GST Calculation</button>
+                <button onclick="switchTab('monthly-sum')" id="btn-monthly-sum" class="pb-3 text-sm font-medium border-b-2 border-transparent text-gray-400 hover:text-white">Monthly Summary</button>
+                <button onclick="switchTab('invoice-gen')" id="btn-invoice-gen" class="pb-3 text-sm font-medium border-b-2 border-transparent text-gray-400 hover:text-white">Live Invoices</button>
+            </div>
+
+            <div id="tab-all-tx" class="tab-pane block overflow-x-auto bg-[#13131a] rounded-xl border border-gray-800">
+                <table class="w-full text-left text-sm text-gray-300">
+                    <thead class="bg-[#1a1a24] text-xs text-white uppercase font-bold border-b border-gray-800">
+                        <tr>
+                            <th class="p-4">Date</th>
+                            <th class="p-4">Description</th>
+                            <th class="p-4">Type</th>
+                            <th class="p-4">Party</th>
+                            <th class="p-4 text-right">Amount</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tx-table-body">
+                        <tr><td colspan="5" class="p-8 text-center text-gray-500">No data available. Click "Use Demo Data" or upload a file.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div id="tab-gst-sheet" class="tab-pane hidden overflow-x-auto bg-[#13131a] rounded-xl border border-gray-800">
+                <table class="w-full text-left text-sm text-gray-300">
+                    <thead class="bg-[#1a1a24] text-xs text-white uppercase font-bold border-b border-gray-800">
+                        <tr>
+                            <th class="p-4">Particulars</th>
+                            <th class="p-4 text-right">Base Amount</th>
+                            <th class="p-4 text-right">CGST</th>
+                            <th class="p-4 text-right">SGST</th>
+                            <th class="p-4 text-right">Grand Total</th>
+                        </tr>
+                    </thead>
+                    <tbody id="gst-table-body">
+                        <tr><td colspan="5" class="p-8 text-center text-gray-500">No data running.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div id="tab-monthly-sum" class="tab-pane hidden overflow-x-auto bg-[#13131a] rounded-xl border border-gray-800">
+                <table class="w-full text-left text-sm text-gray-300">
+                    <thead class="bg-[#1a1a24] text-xs text-white uppercase font-bold border-b border-gray-800">
+                        <tr>
+                            <th class="p-4">Month</th>
+                            <th class="p-4 text-right">Income</th>
+                            <th class="p-4 text-right">Expense</th>
+                            <th class="p-4 text-right">Net Profit</th>
+                            <th class="p-4 text-right">Margin (%)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="summary-table-body">
+                        <tr><td colspan="5" class="p-8 text-center text-gray-500">No summary structured.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div id="tab-invoice-gen" class="tab-pane hidden space-y-4">
+                <div class="flex gap-2 bg-[#13131a] p-3 rounded-lg border border-gray-800 overflow-x-auto">
+                    <button onclick="renderInvoice(0)" class="px-3 py-1 bg-gray-800 text-xs rounded hover:bg-gray-700">Client A Invoice</button>
+                    <button onclick="renderInvoice(1)" class="px-3 py-1 bg-gray-800 text-xs rounded hover:bg-gray-700">Client B Invoice</button>
+                    <button onclick="renderInvoice(2)" class="px-3 py-1 bg-gray-800 text-xs rounded hover:bg-gray-700">Client C Invoice</button>
+                </div>
+                <div id="invoice-paper" class="bg-white text-black p-8 rounded-lg shadow-2xl max-w-2xl mx-auto min-h-[600px] text-xs">
+                    <div class="text-center border-b pb-4 mb-4">
+                        <h2 class="text-xl font-bold text-gray-900 tracking-wide uppercase">Aapki Company Ka Naam</h2>
+                        <p class="text-gray-600">Address, Shehar, State - PIN</p>
+                        <p class="font-semibold mt-1">GSTIN: GSTIN123456789</p>
+                    </div>
+                    <div class="flex justify-between mb-6">
+                        <div>
+                            <p class="font-bold text-gray-700">BILL TO:</p>
+                            <p id="inv-party" class="text-sm font-semibold">Client Name</p>
+                        </div>
+                        <div class="text-right">
+                            <p><span class="font-bold text-gray-700">Invoice No:</span> <span id="inv-id">INV-0001</span></p>
+                            <p><span class="font-bold text-gray-700">Date:</span> <span id="inv-date">19/05/2026</span></p>
+                        </div>
+                    </div>
+                    <table class="w-full mb-6 text-left border-collapse">
+                        <thead>
+                            <tr class="bg-gray-100 border-b border-gray-300 text-gray-700 font-bold">
+                                <th class="p-2">Description</th>
+                                <th class="p-2 text-center">Qty</th>
+                                <th class="p-2 text-right">Rate</th>
+                                <th class="p-2 text-right">Amount</th>
+                            </tr>
+                        </thead>
+                        <tbody id="inv-items-body"></tbody>
+                    </table>
+                    <div class="w-1/2 ml-auto space-y-1 text-right border-t pt-2 font-medium">
+                        <div class="flex justify-between"><span>Subtotal:</span><span id="inv-subtotal">₹0.00</span></div>
+                        <div class="flex justify-between"><span id="inv-gst-lbl">GST (18%):</span><span id="inv-gst-amt">₹0.00</span></div>
+                        <div class="flex justify-between text-sm font-bold text-gray-900 bg-gray-50 p-1 rounded"><span>Grand Total:</span><span id="inv-grand">₹0.00</span></div>
+                    </div>
+                </div>
+                <div class="text-center">
+                    <button onclick="window.print()" class="text-xs text-gray-400 bg-gray-900 px-4 py-2 rounded-lg border border-gray-800 hover:text-white">🖨️ Print Invoice Document</button>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        let globalData = [];
+        const sampleInvoices = [
+            { party: "Client A", items: [{ desc: "Web Development", qty: 1, rate: 50000 }, { desc: "SEO Services", qty: 2, rate: 5000 }] },
+            { party: "Client B", items: [{ desc: "Mobile App Design", qty: 1, rate: 80000 }] },
+            { party: "Client C", items: [{ desc: "Consulting", qty: 5, rate: 3000 }, { desc: "Report Writing", qty: 2, rate: 2500 }] }
+        ];
+
+        const demoRows = [
+            { Date: "2024-01-05", Description: "Office Rent", Type: "Expense", Party: "Landlord", Amount: 25000 },
+            { Date: "2024-01-10", Description: "Website Design", Type: "Income", Party: "Client A", Amount: 75000 },
+            { Date: "2024-01-15", Description: "Electricity Bill", Type: "Expense", Party: "CSPDCL", Amount: 3200 },
+            { Date: "2024-01-20", Description: "Consulting Services", Type: "Income", Party: "Client B", Amount: 50000 },
+            { Date: "2024-02-02", Description: "Office Supplies", Type: "Expense", Party: "Stationery Shop", Amount: 1500 },
+            { Date: "2024-02-08", Description: "Software Development", Type: "Income", Party: "Client C", Amount: 120000 },
+            { Date: "2024-02-14", Description: "Internet Bill", Type: "Expense", Party: "Airtel", Amount: 2000 },
+            { Date: "2024-02-20", Description: "Mobile Recharge", Type: "Expense", Party: "Jio", Amount: 599 },
+            { Date: "2024-03-01", Description: "Training Workshop", Type: "Income", Party: "Client D", Amount: 35000 },
+            { Date: "2024-03-10", Description: "Office Renovation", Type: "Expense", Party: "Contractor", Amount: 45000 },
+            { Date: "2024-03-15", Description: "Annual Maintenance", Type: "Income", Party: "Client A", Amount: 60000 },
+            { Date: "2024-03-25", Description: "Travel Expense", Type: "Expense", Party: "Self", Amount: 8000 }
+        ];
+
+        function switchTab(tabId) {
+            document.querySelectorAll('.tab-pane').forEach(el => el.classList.replace('block', 'hidden'));
+            document.getElementById(`tab-${tabId}`).classList.replace('hidden', 'block');
+            
+            // Sync Styles
+            const tabs = ['all-tx', 'gst-sheet', 'monthly-sum', 'invoice-gen'];
+            tabs.forEach(t => {
+                const btn = document.getElementById(`btn-${t}`);
+                if(t === tabId) {
+                    btn.className = "pb-3 text-sm font-medium border-b-2 border-[#c9a84c] text-[#c9a84c]";
+                } else {
+                    btn.className = "pb-3 text-sm font-medium border-b-2 border-transparent text-gray-400 hover:text-white";
+                }
+            });
+        }
+
+        function loadDemoData() {
+            globalData = [...demoRows];
+            recalculateData();
+            renderInvoice(0);
+        }
+
+        function handleFileUpload(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(evt) {
+                const bstr = evt.target.result;
+                const wb = XLSX.read(bstr, { type: 'binary' });
+                const wsname = wb.SheetNames[0];
+                const ws = wb.Sheets[wsname];
+                const data = XLSX.utils.sheet_to_json(ws);
+                
+                // Normalization Map
+                globalData = data.map(item => ({
+                    Date: item.Date || item['Invoice Date'] || item['bill date'] || new Date().toISOString().split('T')[0],
+                    Description: item.Description || item.desc || item.particulars || 'Transaction Record',
+                    Type: item.Type || item.category || 'Income',
+                    Party: item.Party || item.customer || item.vendor || 'N/A',
+                    Amount: parseFloat(item.Amount || item.amt || item.value || 0)
+                }));
+                recalculateData();
+            };
+            reader.readAsBinaryString(file);
+        }
+
+        function recalculateData() {
+            const rate = parseFloat(document.getElementById('gst-rate-select').value);
+            let income = 0, expense = 0, gstTotal = 0;
+            let monthlyMap = {};
+
+            const txBody = document.getElementById('tx-table-body');
+            const gstBody = document.getElementById('gst-table-body');
+            const sumBody = document.getElementById('summary-table-body');
+
+            txBody.innerHTML = '';
+            gstBody.innerHTML = '';
+
+            globalData.forEach(row => {
+                const amt = row.Amount;
+                const isInc = row.Type.toLowerCase() === 'income';
+                if (isInc) income += amt; else expense += amt;
+
+                // GST logic split calculation metrics
+                const rowGst = parseFloat((amt * (rate / 2) / 100).round(2));
+                const totalGst = rowGst * 2;
+                gstTotal += totalGst;
+
+                // Render Tables
+                txBody.innerHTML += `<tr class="border-b border-gray-800/50 hover:bg-gray-800/30 transition"><td class="p-4">${row.Date}</td><td class="p-4 font-medium text-white">${row.Description}</td><td class="p-4"><span class="px-2 py-0.5 rounded text-xs ${isInc?'bg-emerald-500/10 text-emerald-400':'bg-rose-500/10 text-rose-400'}">${row.Type}</span></td><td class="p-4">${row.Party}</td><td class="p-4 text-right font-semibold">₹${amt.toLocaleString()}</td></tr>`;
+                gstBody.innerHTML += `<tr class="border-b border-gray-800/50 hover:bg-gray-800/30 transition"><td class="p-4 font-medium text-white">${row.Description}</td><td class="p-4 text-right">₹${amt.toFixed(2)}</td><td class="p-4 text-right text-purple-400">₹${rowGst.toFixed(2)}</td><td class="p-4 text-right text-purple-400">₹${rowGst.toFixed(2)}</td><td class="p-4 text-right font-semibold">₹${(amt + totalGst).toFixed(2)}</td></tr>`;
+
+                // Monthly map segmentation
+                const m = row.Date.substring(0, 7);
+                if (!monthlyMap[m]) monthlyMap[m] = { inc: 0, exp: 0 };
+                if (isInc) monthlyMap[m].inc += amt; else monthlyMap[m].exp += amt;
+            });
+
+            // Update KPI Dashboard Widgets Metrics
+            document.getElementById('dash-income').innerText = `₹${income.toLocaleString('en-IN', {minimumFractionDigits:2})}`;
+            document.getElementById('dash-expense').innerText = `₹${expense.toLocaleString('en-IN', {minimumFractionDigits:2})}`;
+            const profit = income - expense;
+            const profEl = document.getElementById('dash-profit');
+            profEl.innerText = `₹${profit.toLocaleString('en-IN', {minimumFractionDigits:2})}`;
+            profEl.className = `text-2xl font-bold mt-2 ${profit >= 0 ? 'text-amber-400' : 'text-rose-500'}`;
+            document.getElementById('dash-gst').innerText = `₹${gstTotal.toLocaleString('en-IN', {minimumFractionDigits:2})}`;
+
+            // Render Monthly breakdown
+            sumBody.innerHTML = '';
+            Object.keys(monthlyMap).sort().forEach(m => {
+                const item = monthlyMap[m];
+                const net = item.inc - item.exp;
+                const margin = item.inc > 0 ? ((net / item.inc) * 100).toFixed(2) : '0.00';
+                sumBody.innerHTML += `<tr class="border-b border-gray-800/50 hover:bg-gray-800/30 transition"><td class="p-4 text-white font-medium">${m}</td><td class="p-4 text-right text-emerald-400">₹${item.inc.toFixed(2)}</td><td class="p-4 text-right text-rose-400">₹${item.exp.toFixed(2)}</td><td class="p-4 text-right">₹${net.toFixed(2)}</td><td class="p-4 text-right font-bold text-amber-500">${margin}%</td></tr>`;
+            });
+        }
+
+        function renderInvoice(idx) {
+            const rate = parseFloat(document.getElementById('gst-rate-select').value);
+            const inv = sampleInvoices[idx];
+            document.getElementById('inv-party').innerText = inv.party;
+            document.getElementById('inv-id').innerText = `INV-000${idx+1}`;
+            document.getElementById('inv-date').innerText = new Date().toLocaleDateString('en-GB');
+            document.getElementById('inv-gst-lbl').innerText = `GST (${rate}%):`;
+
+            const tbody = document.getElementById('inv-items-body');
+            tbody.innerHTML = '';
+            let subtotal = 0;
+
+            inv.items.forEach(item => {
+                const total = item.qty * item.rate;
+                subtotal += total;
+                tbody.innerHTML += `<tr class="border-b text-gray-800"><td class="p-2 font-medium">${item.desc}</td><td class="p-2 text-center">${item.qty}</td><td class="p-2 text-right">₹${item.rate.toFixed(2)}</td><td class="p-2 text-right font-semibold">₹${total.toFixed(2)}</td></tr>`;
+            });
+
+            const gst = parseFloat((subtotal * rate / 100).toFixed(2));
+            document.getElementById('inv-subtotal').innerText = `₹${subtotal.toFixed(2)}`;
+            document.getElementById('inv-gst-amt').innerText = `₹${gst.toFixed(2)}`;
+            document.getElementById('inv-grand').innerText = `₹${(subtotal + gst).toFixed(2)}`;
+        }
+
+        function exportToExcel() {
+            if(globalData.length === 0) { alert("Pehle data add karein!"); return; }
+            const wb = XLSX.utils.book_new();
+            
+            // Sheet 1: Core Base Transaction Log array dataset
+            const ws1 = XLSX.utils.json_to_sheet(globalData);
+            XLSX.utils.book_append_sheet(wb, ws1, "All Transactions");
+
+            // Sheet 2: Generated Dashboard Metrics
+            const rate = parseFloat(document.getElementById('gst-rate-select').value);
+            const gstMapped = globalData.map(r => {
+                const g = parseFloat((r.Amount * (rate/2) / 100).toFixed(2));
+                return {
+                    Date: r.Date, Description: r.Description, Party: r.Party, Type: r.Type,
+                    Base_Amount: r.Amount, CGST: g, SGST: g, Grand_Total: r.Amount + (g * 2)
+                };
+            });
+            const ws2 = XLSX.utils.json_to_sheet(gstMapped);
+            XLSX.utils.book_append_sheet(wb, ws2, "GST Calculation");
+
+            XLSX.writeFile(wb, "accounting_automation_report.xlsx");
+        }
+
+        // Numerical Rounding Prototype Utility polyfill Fix
+        Number.prototype.round = function(places) { return +(Math.round(this + "e+" + places)  + "e-" + places); }
+    </script>
+</body>
+</html>
